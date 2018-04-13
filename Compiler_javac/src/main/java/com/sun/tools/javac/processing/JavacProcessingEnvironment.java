@@ -125,6 +125,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
     private final Map<String, String> processorOptions;
 
     /**
+     * 貌似没什么用，只用来打log
      */
     private final Set<String> unmatchedProcessorOptions;
 
@@ -183,7 +184,9 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         messager = new JavacMessager(context, this);
         elementUtils = JavacElements.instance(context);
         typeUtils = JavacTypes.instance(context);
+        //注解处理器选项
         processorOptions = initProcessorOptions(context);
+        //当前还没有被处理的注解处理器选择
         unmatchedProcessorOptions = initUnmatchedProcessorOptions();
         messages = JavacMessages.instance(context);
         // 搜索注解处理器
@@ -551,6 +554,11 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         return discoveredProcs.iterator().hasNext();
     }
 
+    /**
+     * 初始化 编译处理器的 选项，-A 开头
+     * @param context
+     * @return
+     */
     private Map<String, String> initProcessorOptions(Context context) {
         Options options = Options.instance(context);
         Set<String> keySet = options.keySet();
@@ -601,18 +609,22 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
             contributed = false;
 
             try {
+                // Processor 的 init 方法
                 processor.init(env);
 
                 checkSourceVersionCompatibility(source, log);
 
                 supportedAnnotationPatterns = new ArrayList<Pattern>();
+                //获取所有注解处理器支持的注解类型名，canonicalName
                 for (String importString : processor.getSupportedAnnotationTypes()) {
+                    //根据 import 风格的 canonicalName， 生成一个匹配它名字的 Pattern
                     supportedAnnotationPatterns.add(importStringToPattern(importString,
                                                                           processor,
                                                                           log));
                 }
 
                 supportedOptionNames = new ArrayList<String>();
+                //获取 processor 支持的编译选项
                 for (String optionName : processor.getSupportedOptions() ) {
                     if (checkOptionName(optionName, log))
                         supportedOptionNames.add(optionName);
@@ -698,6 +710,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                 }
 
                 if (psi.processorIterator.hasNext()) {
+                    //维护一个注解处理器的状态
                     ProcessorState ps = new ProcessorState(psi.processorIterator.next(),
                                                            log, source, JavacProcessingEnvironment.this);
                     psi.procStateList.add(ps);
@@ -761,18 +774,22 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                                      Set<TypeElement> annotationsPresent,
                                      List<ClassSymbol> topLevelClasses,
                                      List<PackageSymbol> packageInfoFiles) {
+        //没有被处理的注解
         Map<String, TypeElement> unmatchedAnnotations =
             new HashMap<String, TypeElement>(annotationsPresent.size());
-
+        //添加本轮Round所有注解类型到 unmatchedAnnotations
         for(TypeElement a  : annotationsPresent) {
                 unmatchedAnnotations.put(a.getQualifiedName().toString(),
                                          a);
         }
 
         // Give "*" processors a chance to match
+        /*
+            如果不存在未匹配的注解名称 ， 那么添加一个 "" 空的类型到 unmatchedAnnotations， 用来给 * 注解处理器添加处理机会
+         */
         if (unmatchedAnnotations.size() == 0)
             unmatchedAnnotations.put("", null);
-
+        //注解处理器 Iterator
         DiscoveredProcessors.ProcessorStateIterator psi = discoveredProcs.iterator();
         // TODO: Create proper argument values; need past round
         // information to fill in this constructor.  Note that the 1
@@ -783,31 +800,40 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         Set<Element> rootElements = new LinkedHashSet<Element>();
         rootElements.addAll(topLevelClasses);
         rootElements.addAll(packageInfoFiles);
+        //顶层类注解 和 package-info 注解 去重添加到 set,并拷贝一个不可修改的 set
         rootElements = Collections.unmodifiableSet(rootElements);
 
         RoundEnvironment renv = new JavacRoundEnvironment(false,
                                                           false,
                                                           rootElements,
                                                           JavacProcessingEnvironment.this);
-
+        //只要还有 注解没有被处理，并且还有下一个注解处理器
+        /*
+            如果一开始没有需要处理的注解，那么这里会被添加一个 "" 的 key,
+         */
         while(unmatchedAnnotations.size() > 0 && psi.hasNext() ) {
             ProcessorState ps = psi.next();
+
             Set<String>  matchedNames = new HashSet<String>();
             Set<TypeElement> typeElements = new LinkedHashSet<TypeElement>();
-
+            //遍历当前还没有被处理的注解类型
             for (Map.Entry<String, TypeElement> entry: unmatchedAnnotations.entrySet()) {
                 String unmatchedAnnotationName = entry.getKey();
+                //注解处理器是否支持处理该注解
                 if (ps.annotationSupported(unmatchedAnnotationName) ) {
+                    //新增保存可以处理的注解名
                     matchedNames.add(unmatchedAnnotationName);
                     TypeElement te = entry.getValue();
-                    if (te != null)
+                    if (te != null)//注解名为 "" ，type 为 null
                         typeElements.add(te);
                 }
             }
-
+            //有可以处理的注解，或者标记过 contributed（ 只要曾经处理过一次注解，那么以后都会被调用到)
             if (matchedNames.size() > 0 || ps.contributed) {
+                //调用注解处理器处理，process 方法。
                 boolean processingResult = callProcessor(ps.processor, typeElements, renv);
                 ps.contributed = true;
+                //unmatchedProcessorOptions 中移除当前 注解处理器的所有支持的 选项（supportedOptionNames）。
                 ps.removeSupportedOptions(unmatchedProcessorOptions);
 
                 if (printProcessorInfo || verbose) {
@@ -816,13 +842,14 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
                             matchedNames.toString(),
                             processingResult);
                 }
-
+                // process 方法返回 true, 那么移除本处理器支持的所有 注解
                 if (processingResult) {
                     unmatchedAnnotations.keySet().removeAll(matchedNames);
                 }
 
             }
         }
+        //移除为了 * 注解处理器添加的 "" 统配注解类型
         unmatchedAnnotations.remove("");
 
         if (lint && unmatchedAnnotations.size() > 0) {
@@ -1057,8 +1084,10 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
             ComputeAnnotationSet annotationComputer = new ComputeAnnotationSet(elementUtils);
             // Use annotation processing to compute the set of annotations present
             annotationsPresent = new LinkedHashSet<TypeElement>();
+            //所有顶层类内部有的注解
             for (ClassSymbol classSym : topLevelClasses)
                 annotationComputer.scan(classSym, annotationsPresent);
+            //package-info.java 中的 包注解
             for (PackageSymbol pkgSym : packageInfoFiles)
                 annotationComputer.scan(pkgSym, annotationsPresent);
         }
@@ -1247,17 +1276,20 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         boolean moreToDo;
         do {
             // Run processors for round n
+            //至少有第一次查询
             round.run(false, false);
 
             // Processors for round n have run to completion.
             // Check for errors and whether there is more work to do.
             errorStatus = round.unrecoverableError();
+            //?应该是本轮Round run 之后，是否有生成新的java代码，可能会导致生成新的注解?
             moreToDo = moreToDo();
 
             round.showDiagnostics(errorStatus || showResolveErrors);
 
             // Set up next round.
             // Copy mutable collections returned from filer.
+            //继续下一轮，拷贝本次filer生成的java文件/class
             round = round.next(
                     new LinkedHashSet<JavaFileObject>(filer.getGeneratedSourceFileObjects()),
                     new LinkedHashMap<String,JavaFileObject>(filer.getGeneratedClasses()));
@@ -1269,6 +1301,7 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         } while (moreToDo && !errorStatus);
 
         // run last round
+        //至少有最后一次
         round.run(true, errorStatus);
         round.showDiagnostics(true);
 
@@ -1538,6 +1571,8 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
      * Convert import-style string for supported annotations into a
      * regex matching that string.  If the string is a valid
      * import-style string, return a regex that won't match anything.
+     *
+     * 根据 import 风格的 canonicalName， 生成一个匹配它名字的 Pattern
      */
     private static Pattern importStringToPattern(String s, Processor p, Log log) {
         if (isValidImportString(s)) {
@@ -1582,12 +1617,22 @@ public class JavacProcessingEnvironment implements ProcessingEnvironment, Closea
         return valid;
     }
 
+    /**
+     * 对于 * , 对应的正则是 .* ，匹配所有 import 风格的 canonicalName
+     * 对于形如 java.lang.Override , 生成正则  java\.lang\.Override ,处理元字符 .
+     * 如果是 java.lang.* 形似的，* 结尾，表示支持一个包下所有类型， 生成的正则 java\.lang.+ ,匹配该包下所有类型
+     * @param s
+     * @return
+     */
     public static Pattern validImportStringToPattern(String s) {
+        //如果名称是 * ，表示支持所有类型，返回一个全匹配的 Pattern
         if (s.equals("*")) {
             return allMatches;
         } else {
+            //将 import 风格的 canonicalName 中的 . 替换为 \.  （.是正则的元字符，需要转义
             String s_prime = s.replace(".", "\\.");
 
+            //如果是 * 结尾的，那么，结尾应该要换成 .+ 形式
             if (s_prime.endsWith("*")) {
                 s_prime =  s_prime.substring(0, s_prime.length() - 1) + ".+";
             }
