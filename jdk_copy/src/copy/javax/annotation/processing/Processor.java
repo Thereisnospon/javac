@@ -1,27 +1,5 @@
 package copy.javax.annotation.processing;/*
- * Copyright (c) 2005, 2006, Oracle and/or its affiliates. All rights reserved.
- * ORACLE PROPRIETARY/CONFIDENTIAL. Use is subject to license terms.
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- *
- */
+
 /**
  * copy form javax.annotation.processing.copy.javax.annotation.processing.Processor
  */
